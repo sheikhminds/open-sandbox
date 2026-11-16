@@ -24,6 +24,7 @@ import {
 import {Badge} from '@astryxdesign/core/Badge';
 import {Button} from '@astryxdesign/core/Button';
 import {Dialog, DialogHeader} from '@astryxdesign/core/Dialog';
+import {Drawer} from '@astryxdesign/core/Drawer';
 import {Divider} from '@astryxdesign/core/Divider';
 import {EmptyState} from '@astryxdesign/core/EmptyState';
 import {Icon} from '@astryxdesign/core/Icon';
@@ -121,7 +122,12 @@ function demoReply(input: string) {
 // ---------------------------------------------------------------------------
 
 const styles: Record<string, CSSProperties> = {
-  root: {height: '100dvh', width: '100%'},
+  root: {
+    height: '100dvh',
+    width: '100%',
+    paddingInline: 'env(safe-area-inset-left) env(safe-area-inset-right)',
+    paddingBottom: 'env(safe-area-inset-bottom)',
+  },
   sidebar: {height: '100%', minHeight: 0},
   sidebarHeader: {
     alignItems: 'center',
@@ -183,11 +189,14 @@ export default function AIChatPage({mode, onModeChange}: Props) {
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
-  const isCompact = useMediaQuery('(max-width: 768px)');
-  const showSidebar = isCompact ? isMobileSidebarOpen : !isSidebarCollapsed;
+  const isMobile = useMediaQuery('(max-width: 768px)');
+  const isTablet = useMediaQuery('(min-width: 769px) and (max-width: 1024px)');
+  const isShort = useMediaQuery('(max-height: 600px)');
+  const compactChat = isMobile || isShort;
+  const showSidebar = isMobile ? isMobileSidebarOpen : !isSidebarCollapsed;
 
   function toggleSidebar() {
-    if (isCompact) setIsMobileSidebarOpen(open => !open);
+    if (isMobile) setIsMobileSidebarOpen(open => !open);
     else setIsSidebarCollapsed(collapsed => !collapsed);
   }
 
@@ -584,7 +593,7 @@ export default function AIChatPage({mode, onModeChange}: Props) {
           size="sm"
           onClick={handleNewChat}
         />
-        {isCompact && (
+        {isMobile && (
           <IconButton
             label="Close conversations"
             tooltip="Close conversations"
@@ -676,7 +685,7 @@ export default function AIChatPage({mode, onModeChange}: Props) {
     </Stack>
   );
 
-  const headerActions = isCompact ? (
+  const headerActions = isMobile ? (
     <MoreMenu
       label="Conversation actions"
       size="sm"
@@ -768,13 +777,23 @@ export default function AIChatPage({mode, onModeChange}: Props) {
     </>
   );
 
+  const headerStyle: CSSProperties = {
+    ...styles.streamHeader,
+    paddingInline: isMobile
+      ? 'var(--spacing-2)'
+      : isTablet
+        ? 'var(--spacing-3)'
+        : 'var(--spacing-4)',
+    paddingBlock: compactChat ? 'var(--spacing-2)' : 'var(--spacing-3)',
+  };
+
   return (
     <VStack style={styles.root}>
       <Layout
         height="fill"
         start={
-          showSidebar ? (
-            <LayoutPanel width={280} padding={0}>
+          !isMobile && showSidebar ? (
+            <LayoutPanel width={isTablet ? 240 : 280} padding={0}>
               {sidebar}
             </LayoutPanel>
           ) : undefined
@@ -782,7 +801,7 @@ export default function AIChatPage({mode, onModeChange}: Props) {
         content={
           <LayoutContent padding={0}>
             <Stack direction="vertical" style={{height: '100%', minHeight: 0}}>
-              <HStack gap={2} style={styles.streamHeader}>
+              <HStack gap={2} style={headerStyle}>
                 <IconButton
                   label={showSidebar ? 'Hide conversations' : 'Show conversations'}
                   tooltip={
@@ -811,18 +830,18 @@ export default function AIChatPage({mode, onModeChange}: Props) {
                       {selected?.title ?? 'New conversation'}
                     </Heading>
                     <Text type="supporting" color="secondary" maxLines={1}>
-                      {selected?.messages.length ?? 0} messages ·{' '}
-                      {wordCount(selected ? [selected] : [])} words ·{' '}
-                      {apiStatus.configured
-                        ? `${apiStatus.model} via ${apiStatus.provider}`
-                        : 'local demo'}
+                      {isMobile
+                        ? `${selected?.messages.length ?? 0} messages · ${apiStatus.configured ? 'live' : 'local demo'}`
+                        : `${selected?.messages.length ?? 0} messages · ${wordCount(selected ? [selected] : [])} words · ${apiStatus.configured ? `${apiStatus.model} via ${apiStatus.provider}` : 'local demo'}`}
                     </Text>
                   </VStack>
                 </StackItem>
-                <Badge
-                  label={apiStatus.configured ? 'Live' : 'Local demo'}
-                  variant="neutral"
-                />
+                {!isMobile && (
+                  <Badge
+                    label={apiStatus.configured ? 'Live' : 'Local demo'}
+                    variant="neutral"
+                  />
+                )}
                 {headerActions}
               </HStack>
 
@@ -830,10 +849,11 @@ export default function AIChatPage({mode, onModeChange}: Props) {
 
               <VStack style={styles.chatFill}>
                 <ChatLayout
-                  density="balanced"
+                  density={compactChat ? 'compact' : 'balanced'}
                   style={styles.chatLayout}
                   composer={
                     <ChatComposer
+                      density={compactChat ? 'compact' : 'balanced'}
                       value={draft}
                       onChange={setDraft}
                       onSubmit={handleSubmit}
@@ -842,11 +862,13 @@ export default function AIChatPage({mode, onModeChange}: Props) {
                       placeholder="Ask anything — Markdown is supported..."
                       input={<ChatComposerInput />}
                       footerActions={
-                        <Text type="supporting" color="secondary">
-                          {apiStatus.configured
-                            ? 'Streaming · reasoning preserved'
-                            : 'Offline demo · replies use Markdown'}
-                        </Text>
+                        isMobile ? undefined : (
+                          <Text type="supporting" color="secondary">
+                            {apiStatus.configured
+                              ? 'Streaming · reasoning preserved'
+                              : 'Offline demo · replies use Markdown'}
+                          </Text>
+                        )
                       }
                     />
                   }
@@ -875,7 +897,8 @@ export default function AIChatPage({mode, onModeChange}: Props) {
                     />
                   }>
                   {selected && selected.messages.length > 0 ? (
-                    <ChatMessageList density="balanced">
+                    <ChatMessageList
+                      density={compactChat ? 'compact' : 'balanced'}>
                       <ChatSystemMessage variant="divider">Today</ChatSystemMessage>
                       {selected.messages.map(message => (
                         <MessageRow
@@ -899,6 +922,18 @@ export default function AIChatPage({mode, onModeChange}: Props) {
           </LayoutContent>
         }
       />
+
+      {isMobile && (
+        <Drawer
+          isOpen={isMobileSidebarOpen}
+          onOpenChange={setIsMobileSidebarOpen}
+          label="Conversations"
+          side="start"
+          width={320}
+          padding={0}>
+          {sidebar}
+        </Drawer>
+      )}
 
       <SettingsDialog
         isOpen={isSettingsOpen}
