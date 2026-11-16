@@ -1,7 +1,7 @@
 {
   "name": "open-sandbox",
   "version": "1.0.0",
-  "description": "A free and open-source local-first chat interface built with Astryx.",
+  "description": "Open Sandbox — a free and open-source local-first chat interface built with Astryx.",
   "private": true,
   "scripts": {
     "dev": "vite",

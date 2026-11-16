@@ -2,13 +2,7 @@
 // spacing are kept; the artifact panel is replaced with a conversation list
 // and the transcript is wired to a live, streamed chat endpoint.
 
-import {
-  useEffect,
-  useMemo,
-  useRef,
-  useState,
-  type CSSProperties,
-} from 'react';
+import {useEffect, useMemo, useRef, useState, type CSSProperties} from 'react';
 
 import {
   Layout,
@@ -24,138 +18,101 @@ import {
   ChatComposer,
   ChatComposerInput,
   ChatLayout,
-  ChatMessage,
-  ChatMessageBubble,
   ChatMessageList,
-  ChatMessageMetadata,
   ChatSystemMessage,
 } from '@astryxdesign/core/Chat';
-import {Avatar} from '@astryxdesign/core/Avatar';
 import {Badge} from '@astryxdesign/core/Badge';
 import {Button} from '@astryxdesign/core/Button';
+import {Dialog, DialogHeader} from '@astryxdesign/core/Dialog';
 import {Divider} from '@astryxdesign/core/Divider';
 import {EmptyState} from '@astryxdesign/core/EmptyState';
 import {Icon} from '@astryxdesign/core/Icon';
 import {IconButton} from '@astryxdesign/core/IconButton';
 import {List, ListItem} from '@astryxdesign/core/List';
+import {MoreMenu} from '@astryxdesign/core/MoreMenu';
 import {TextInput} from '@astryxdesign/core/TextInput';
-import {Timestamp} from '@astryxdesign/core/Timestamp';
 import {useMediaQuery} from '@astryxdesign/core/hooks';
 
 import {
-  Bars3Icon,
+  ArrowDownTrayIcon,
   ChatBubbleLeftRightIcon,
+  ChevronDoubleLeftIcon,
+  ChevronDoubleRightIcon,
+  Cog6ToothIcon,
   MagnifyingGlassIcon,
+  MoonIcon,
+  PencilIcon,
   PlusIcon,
   SparklesIcon,
+  SunIcon,
   TrashIcon,
   XMarkIcon,
 } from '@heroicons/react/24/outline';
 
-// ---------------------------------------------------------------------------
-// Types and local persistence
-// ---------------------------------------------------------------------------
-
-type Role = 'user' | 'assistant';
-
-type Message = {
-  id: string;
-  role: Role;
-  text: string;
-  sentAt: string;
-  // Beam models require the reasoning they emitted for every earlier
-  // assistant message when the history is replayed on a later turn.
-  reasoningContent?: string;
-};
-
-type Conversation = {
-  id: string;
-  title: string;
-  messages: Message[];
-  updatedAt: string;
-};
-
-type ApiStatus = {
-  configured: boolean;
-  provider: string;
-  model: string;
-};
-
-const STORAGE_KEY = 'astryx-chat-conversations-v1';
-const SELECTED_KEY = 'astryx-chat-selected-v1';
-
-let idCounter = 0;
-function makeId(prefix: string) {
-  idCounter += 1;
-  return `${prefix}-${Date.now()}-${idCounter}`;
-}
-
-function newConversation(
-  title = 'New conversation',
-  messages: Message[] = [],
-): Conversation {
-  const now = new Date().toISOString();
-  return {id: makeId('c'), title, messages, updatedAt: now};
-}
-
-const WELCOME_TEXT =
-  "Hi! I'm Astryx Chat. This interface is built entirely from free, open-source packages (Astryx, React and StyleX are MIT-licensed). Your conversations are saved in this browser. Ask me about open models, local runtimes, or anything else.";
-
-function seedConversations(): Conversation[] {
-  return [
-    newConversation('Welcome', [
-      {
-        id: 'welcome-message',
-        role: 'assistant',
-        text: WELCOME_TEXT,
-        sentAt: '2026-11-16T10:00:00',
-      },
-    ]),
-  ];
-}
-
-function loadConversations(): Conversation[] {
-  try {
-    const raw = localStorage.getItem(STORAGE_KEY);
-    if (raw) {
-      const parsed = JSON.parse(raw) as Conversation[];
-      if (Array.isArray(parsed) && parsed.length > 0) return parsed;
-    }
-  } catch {
-    // Corrupt or unavailable storage — fall back to a fresh conversation.
-  }
-  return seedConversations();
-}
+import MessageRow from '../components/MessageRow';
+import SettingsDialog from '../components/SettingsDialog';
+import {
+  DEFAULT_SETTINGS,
+  buildOutbound,
+  conversationToMarkdown,
+  downloadFile,
+  loadConversations,
+  loadSelectedId,
+  loadSettings,
+  makeId,
+  newConversation,
+  saveConversations,
+  saveSelectedId,
+  saveSettings,
+  seedConversations,
+  streamCompletion,
+  wordCount,
+  type ApiStatus,
+  type Conversation,
+  type Message,
+  type OutboundMessage,
+  type Settings,
+  type ThemeMode,
+} from '../chat/model';
 
 // ---------------------------------------------------------------------------
-// Offline fallback replies (used only when no API key is configured)
+// Offline fallback (used only when no API key is configured)
 // ---------------------------------------------------------------------------
 
 const SUGGESTIONS = [
-  'What open-source models can I run locally?',
-  'How do I keep my chat data private?',
-  'Which licenses do these packages use?',
+  'Explain how a JWT works with a code example',
+  'Compare REST and GraphQL in a table',
+  'Write a markdown checklist for launching a side project',
+  'How do I run open-source models locally?',
 ];
 
 const DEMO_REPLIES: Array<{match: RegExp; text: string}> = [
   {
-    match: /ollama|local|offline|run.*model/i,
-    text: 'Ollama is the simplest free way to run open-weight models locally (Llama, Mistral, Qwen, Gemma and more). LM Studio is another good desktop option. Both expose an OpenAI-compatible API, so this app can point at them just as easily as at a hosted endpoint.',
+    match: /jwt|token|auth/i,
+    text: '## JSON Web Tokens\n\nA JWT has three parts: `header.payload.signature`. The server signs it so the client can send proof of identity without a session.\n\n| Part | Purpose |\n| --- | --- |\n| Header | Algorithm and type |\n| Payload | Claims such as `sub` and `exp` |\n| Signature | Verifies it was not tampered with |\n\n```js\nconst token = sign({sub: user.id, exp: expiresAt}, secret);\n```',
   },
   {
-    match: /hugging|license|open.?source|mit|free/i,
-    text: 'Everything in this project is free and open source under the MIT license: @astryxdesign/core, @astryxdesign/theme-neutral, @astryxdesign/cli, @stylexjs/stylex and React. Model weights each have their own license, so check the model card before using one commercially.',
+    match: /rest|graphql|table|compare/i,
+    text: '| Aspect | REST | GraphQL |\n| --- | --- | --- |\n| Endpoints | Many URLs | One endpoint |\n| Data fetching | Over/under-fetching | Ask for exactly what you need |\n| Caching | Built into HTTP | Needs a client cache |\n\nBoth are fine — pick based on how varied your clients are.',
+  },
+  {
+    match: /ollama|local|offline|run.*model/i,
+    text: '## Run open models locally\n\n- **Ollama** — one command to run Llama, Mistral, Qwen or Gemma\n- **LM Studio** — desktop app with a model browser\n- Both expose an OpenAI-compatible API, so Open Sandbox can point at them instead of a hosted service.',
+  },
+  {
+    match: /license|open.?source|mit|free/i,
+    text: 'Everything here is **MIT licensed**: Astryx, React, StyleX and this project. Model weights each have their own license, so check the model card before commercial use.',
   },
   {
     match: /privacy|data|cloud|store/i,
-    text: 'Your conversations are stored only in this browser via localStorage — there is no analytics or tracking. When a live API key is configured, messages are sent to that provider for inference. You can clear everything with the trash button in the header.',
+    text: 'Conversations live in this browser via `localStorage`. When a live key is set, messages go to that provider for inference only. Use **Export** to keep a Markdown copy, or **Clear all** to remove everything.',
   },
 ];
 
 function demoReply(input: string) {
   return (
     DEMO_REPLIES.find(reply => reply.match.test(input))?.text ??
-    'This is the local demo responder. Set REFLECTION_API_KEY in your .env file and restart the dev server to chat with a live model instead.'
+    'This is the local demo responder. Set `REFLECTION_API_KEY` in `.env` and restart the dev server to chat with a live model instead.'
   );
 }
 
@@ -181,9 +138,7 @@ const styles: Record<string, CSSProperties> = {
     paddingInline: 'var(--spacing-2)',
     paddingBottom: 'var(--spacing-3)',
   },
-  sidebarFooter: {
-    padding: 'var(--spacing-3)',
-  },
+  sidebarFooter: {padding: 'var(--spacing-2)'},
   streamHeader: {
     alignItems: 'center',
     paddingInline: 'var(--spacing-4)',
@@ -192,63 +147,50 @@ const styles: Record<string, CSSProperties> = {
   title: {minWidth: 0},
   chatFill: {flex: 1, minHeight: 0, width: '100%'},
   chatLayout: {flex: 1, minHeight: 0},
+  pad: {padding: 'var(--spacing-3)'},
 };
-
-// ---------------------------------------------------------------------------
-// One message row
-// ---------------------------------------------------------------------------
-
-function MessageRow({message}: {message: Message}) {
-  const isUser = message.role === 'user';
-  return (
-    <ChatMessage
-      sender={isUser ? 'user' : 'assistant'}
-      avatar={isUser ? undefined : <Avatar name="Astryx" size="md" />}>
-      <ChatMessageBubble
-        name={isUser ? undefined : 'Astryx'}
-        metadata={
-          <ChatMessageMetadata
-            timestamp={<Timestamp value={message.sentAt} format="time" />}
-          />
-        }>
-        {message.text || (isUser ? '' : '…')}
-      </ChatMessageBubble>
-    </ChatMessage>
-  );
-}
 
 // ---------------------------------------------------------------------------
 // Page
 // ---------------------------------------------------------------------------
 
-export default function AIChatPage() {
+type Props = {
+  mode: ThemeMode;
+  onModeChange: (mode: ThemeMode) => void;
+};
+
+export default function AIChatPage({mode, onModeChange}: Props) {
   const [conversations, setConversations] =
     useState<Conversation[]>(loadConversations);
-  const [selectedId, setSelectedId] = useState(() => {
-    try {
-      return localStorage.getItem(SELECTED_KEY) ?? '';
-    } catch {
-      return '';
-    }
-  });
+  const [selectedId, setSelectedId] = useState(loadSelectedId);
   const [draft, setDraft] = useState('');
   const [isResponding, setIsResponding] = useState(false);
   const [search, setSearch] = useState('');
-  const [isSidebarOpen, setIsSidebarOpen] = useState(false);
+  const [isSidebarCollapsed, setIsSidebarCollapsed] = useState(false);
+  const [isMobileSidebarOpen, setIsMobileSidebarOpen] = useState(false);
+  const [settings, setSettings] = useState<Settings>(loadSettings);
   const [apiStatus, setApiStatus] = useState<ApiStatus>({
     configured: false,
     provider: 'Local demo',
     model: 'No API key',
   });
 
+  const [isSettingsOpen, setIsSettingsOpen] = useState(false);
+  const [isRenameOpen, setIsRenameOpen] = useState(false);
+  const [renameValue, setRenameValue] = useState('');
+  const [isClearOpen, setIsClearOpen] = useState(false);
+
   const timerRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const abortRef = useRef<AbortController | null>(null);
 
   const isCompact = useMediaQuery('(max-width: 768px)');
-  const showSidebar = !isCompact || isSidebarOpen;
+  const showSidebar = isCompact ? isMobileSidebarOpen : !isSidebarCollapsed;
 
-  // Ask our own server whether a key is configured. The token never travels
-  // to the browser; only this boolean and the model name do.
+  function toggleSidebar() {
+    if (isCompact) setIsMobileSidebarOpen(open => !open);
+    else setIsSidebarCollapsed(collapsed => !collapsed);
+  }
+
   useEffect(() => {
     fetch('/api/chat')
       .then(response => (response.ok ? response.json() : null))
@@ -262,27 +204,16 @@ export default function AIChatPage() {
         }
       })
       .catch(() => {
-        // No backend (e.g. static hosting) — keep the local demo.
+        // Static hosting without the proxy — keep the local demo.
       });
   }, []);
 
-  useEffect(() => {
-    try {
-      localStorage.setItem(STORAGE_KEY, JSON.stringify(conversations));
-    } catch {
-      // Storage may be full or disabled; the app still works in memory.
-    }
-  }, [conversations]);
-
+  useEffect(() => saveConversations(conversations), [conversations]);
   useEffect(() => {
     if (!selectedId && conversations.length > 0) {
       setSelectedId(conversations[0].id);
     }
-    try {
-      if (selectedId) localStorage.setItem(SELECTED_KEY, selectedId);
-    } catch {
-      // Ignore storage failures.
-    }
+    if (selectedId) saveSelectedId(selectedId);
   }, [conversations, selectedId]);
 
   useEffect(
@@ -293,19 +224,26 @@ export default function AIChatPage() {
     [],
   );
 
-  const selected = conversations.find(conversation => conversation.id === selectedId);
+  const selected = conversations.find(
+    conversation => conversation.id === selectedId,
+  );
 
   const visibleConversations = useMemo(() => {
     const query = search.trim().toLowerCase();
-    const sorted = [...conversations].sort(
-      (a, b) => b.updatedAt.localeCompare(a.updatedAt),
+    const sorted = [...conversations].sort((a, b) =>
+      b.updatedAt.localeCompare(a.updatedAt),
     );
-    return query
-      ? sorted.filter(conversation =>
-          conversation.title.toLowerCase().includes(query),
-        )
-      : sorted;
+    if (!query) return sorted;
+    return sorted.filter(
+      conversation =>
+        conversation.title.toLowerCase().includes(query) ||
+        conversation.messages.some(message =>
+          message.text.toLowerCase().includes(query),
+        ),
+    );
   }, [conversations, search]);
+
+  // --- state helpers -------------------------------------------------------
 
   function patchMessage(
     conversationId: string,
@@ -327,12 +265,71 @@ export default function AIChatPage() {
     );
   }
 
+  function runDemoReply(
+    conversationId: string,
+    replyId: string,
+    sourceText: string,
+  ) {
+    setIsResponding(true);
+    timerRef.current = setTimeout(() => {
+      patchMessage(conversationId, replyId, {text: demoReply(sourceText)});
+      setIsResponding(false);
+    }, 600);
+  }
+
+  async function streamReply(
+    conversationId: string,
+    replyId: string,
+    outbound: OutboundMessage[],
+  ) {
+    const controller = new AbortController();
+    abortRef.current = controller;
+    setIsResponding(true);
+    try {
+      await streamCompletion(
+        outbound,
+        settings,
+        (text, reasoning) => {
+          patchMessage(conversationId, replyId, {
+            text,
+            reasoningContent: reasoning,
+          });
+        },
+        controller.signal,
+      );
+    } catch (error) {
+      if ((error as Error).name !== 'AbortError') {
+        patchMessage(conversationId, replyId, {
+          text: `Sorry — the request failed: ${(error as Error).message}`,
+        });
+      }
+    } finally {
+      abortRef.current = null;
+      setIsResponding(false);
+    }
+  }
+
+  function runReply(
+    conversationId: string,
+    replyId: string,
+    outbound: OutboundMessage[],
+    sourceText: string,
+  ) {
+    if (apiStatus.configured) {
+      void streamReply(conversationId, replyId, outbound);
+    } else {
+      runDemoReply(conversationId, replyId, sourceText);
+    }
+  }
+
+  // --- actions -------------------------------------------------------------
+
   function handleNewChat() {
     const conversation = newConversation();
     setConversations(previous => [conversation, ...previous]);
     setSelectedId(conversation.id);
     setDraft('');
-    setIsSidebarOpen(false);
+    setIsMobileSidebarOpen(false);
   }
 
   function handleDeleteChat() {
@@ -350,16 +347,24 @@ export default function AIChatPage() {
     }
   }
 
-  function handleStop() {
-    if (timerRef.current) {
-      clearTimeout(timerRef.current);
-      timerRef.current = null;
-    }
-    abortRef.current?.abort();
-    setIsResponding(false);
+  function handleDeleteMessage(messageId: string) {
+    if (!selected) return;
+    setConversations(previous =>
+      previous.map(conversation =>
+        conversation.id === selected.id
+          ? {
+              ...conversation,
+              messages: conversation.messages.filter(
+                message => message.id !== messageId,
+              ),
+              updatedAt: new Date().toISOString(),
+            }
+          : conversation,
+      ),
+    );
   }
 
-  async function handleSubmit(value: string) {
+  function handleSubmit(value: string) {
     const text = value.trim();
     if (!text || !selected || isResponding) return;
 
@@ -371,33 +376,8 @@ export default function AIChatPage() {
       text,
       sentAt: now,
     };
-    // The Beam models need the reasoning they emitted for each earlier
-    // assistant turn. Replay it verbatim; skip assistant turns that have no
-    // stored reasoning (e.g. the seeded welcome or older local-demo replies).
-    const outbound: Array<{
-      role: 'user' | 'assistant';
-      content: string;
-      reasoning_content?: string;
-    }> = [];
-    for (const message of selected.messages) {
-      if (message.role === 'user') {
-        outbound.push({role: 'user', content: message.text});
-      } else if (message.reasoningContent) {
-        outbound.push({
-          role: 'assistant',
-          content: message.text,
-          reasoning_content: message.reasoningContent,
-        });
-      }
-    }
-    outbound.push({role: 'user', content: text});
     const replyId = makeId('a');
-    const reply: Message = {
-      id: replyId,
-      role: 'assistant',
-      text: '',
-      sentAt: now,
-    };
+    const history = [...selected.messages, userMessage];
 
     setConversations(previous =>
       previous.map(conversation =>
@@ -409,123 +389,196 @@ export default function AIChatPage() {
                   .length === 0
                   ? text.slice(0, 48)
                   : conversation.title,
-              messages: [...conversation.messages, userMessage, reply],
+              messages: [
+                ...conversation.messages,
+                userMessage,
+                {id: replyId, role: 'assistant', text: '', sentAt: now},
+              ],
               updatedAt: now,
             }
           : conversation,
       ),
     );
     setDraft('');
-    setIsResponding(true);
-
-    // Local demo mode — no key configured.
-    if (!apiStatus.configured) {
-      timerRef.current = setTimeout(() => {
-        patchMessage(conversationId, replyId, {text: demoReply(text)});
-        setIsResponding(false);
-      }, 600);
-      return;
-    }
-
-    // Live mode — stream tokens from our server-side proxy.
-    const controller = new AbortController();
-    abortRef.current = controller;
-    try {
-      const response = await fetch('/api/chat', {
-        method: 'POST',
-        headers: {'Content-Type': 'application/json'},
-        body: JSON.stringify({messages: outbound}),
-        signal: controller.signal,
-      });
-      if (!response.ok) {
-        const detail = (await response.json().catch(() => ({}))) as {
-          error?: string;
-        };
-        throw new Error(detail.error ?? `Request failed (${response.status})`);
-      }
-
-      const reader = response.body?.getReader();
-      if (!reader) throw new Error('No response stream was returned.');
-
-      const decoder = new TextDecoder();
-      let buffer = '';
-      let content = '';
-      let reasoning = '';
-
-      while (true) {
-        const {done, value} = await reader.read();
-        if (done) break;
-        buffer += decoder.decode(value, {stream: true});
-        const lines = buffer.split('\n');
-        buffer = lines.pop() ?? '';
-        for (const line of lines) {
-          const trimmed = line.trim();
-          if (!trimmed.startsWith('data:')) continue;
-          const data = trimmed.slice(5).trim();
-          if (!data || data === '[DONE]') continue;
-          try {
-            const event = JSON.parse(data) as {
-              choices?: Array<{
-                delta?: {content?: string; reasoning_content?: string};
-              }>;
-            };
-            const delta = event.choices?.[0]?.delta;
-            const reasoningDelta = delta?.reasoning_content;
-            const textDelta = delta?.content;
-            let changed = false;
-            if (typeof reasoningDelta === 'string' && reasoningDelta) {
-              reasoning += reasoningDelta;
-              changed = true;
-            }
-            if (typeof textDelta === 'string' && textDelta) {
-              content += textDelta;
-              changed = true;
-            }
-            if (changed) {
-              patchMessage(conversationId, replyId, {
-                text: content,
-                reasoningContent: reasoning,
-              });
-            }
-          } catch {
-            // Ignore keep-alive comments / partial frames.
-          }
-        }
-      }
-      if (!content) {
-        patchMessage(conversationId, replyId, {
-          text: '(No content returned.)',
-          reasoningContent: reasoning,
-        });
-      }
-    } catch (error) {
-      if ((error as Error).name !== 'AbortError') {
-        patchMessage(conversationId, replyId, {
-          text: `Sorry — the request failed: ${(error as Error).message}`,
-        });
-      }
-    } finally {
-      abortRef.current = null;
-      setIsResponding(false);
-    }
+    runReply(
+      conversationId,
+      replyId,
+      buildOutbound(history, settings.systemPrompt),
+      text,
+    );
   }
+
+  function handleRegenerate(messageId: string) {
+    if (!selected || isResponding) return;
+    const index = selected.messages.findIndex(message => message.id === messageId);
+    if (index < 0) return;
+    const base = selected.messages.slice(0, index);
+    const source =
+      [...base].reverse().find(message => message.role === 'user')?.text ?? '';
+    const replyId = makeId('a');
+    const now = new Date().toISOString();
+
+    setConversations(previous =>
+      previous.map(conversation =>
+        conversation.id === selected.id
+          ? {
+              ...conversation,
+              messages: [
+                ...base,
+                {id: replyId, role: 'assistant', text: '', sentAt: now},
+              ],
+              updatedAt: now,
+            }
+          : conversation,
+      ),
+    );
+    runReply(
+      selected.id,
+      replyId,
+      buildOutbound(base, settings.systemPrompt),
+      source,
+    );
+  }
+
+  function handleEditMessage(messageId: string, text: string) {
+    if (!selected || isResponding) return;
+    const index = selected.messages.findIndex(message => message.id === messageId);
+    if (index < 0) return;
+    const base = [
+      ...selected.messages.slice(0, index),
+      {...selected.messages[index], text, sentAt: new Date().toISOString()},
+    ];
+    const replyId = makeId('a');
+    const now = new Date().toISOString();
+
+    setConversations(previous =>
+      previous.map(conversation =>
+        conversation.id === selected.id
+          ? {
+              ...conversation,
+              messages: [
+                ...base,
+                {id: replyId, role: 'assistant', text: '', sentAt: now},
+              ],
+              updatedAt: now,
+            }
+          : conversation,
+      ),
+    );
+    runReply(
+      selected.id,
+      replyId,
+      buildOutbound(base, settings.systemPrompt),
+      text,
+    );
+  }
+
+  function handleStop() {
+    if (timerRef.current) {
+      clearTimeout(timerRef.current);
+      timerRef.current = null;
+    }
+    abortRef.current?.abort();
+    setIsResponding(false);
+  }
+
+  function handleExport() {
+    if (!selected) return;
+    const slug =
+      selected.title
+        .toLowerCase()
+        .replace(/[^a-z0-9]+/g, '-')
+        .replace(/^-|-$/g, '') || 'conversation';
+    downloadFile(`${slug}.md`, conversationToMarkdown(selected));
+  }
+
+  function handleExportAll() {
+    if (conversations.length === 0) return;
+    const document = conversations
+      .map(conversationToMarkdown)
+      .join('\n\n---\n\n');
+    downloadFile('open-sandbox-conversations.md', document);
+  }
+
+  function handleRenameSave() {
+    const title = renameValue.trim();
+    if (title && selected) {
+      setConversations(previous =>
+        previous.map(conversation =>
+          conversation.id === selected.id ? {...conversation, title} : conversation,
+        ),
+      );
+    }
+    setIsRenameOpen(false);
+  }
+
+  function handleClearAll() {
+    const fresh = seedConversations();
+    setConversations(fresh);
+    setSelectedId(fresh[0].id);
+    setIsClearOpen(false);
+  }
+
+  function handleToggleTheme() {
+    const next: ThemeMode =
+      mode === 'dark'
+        ? 'light'
+        : mode === 'light'
+          ? 'dark'
+          : window.matchMedia?.('(prefers-color-scheme: dark)').matches
+            ? 'light'
+            : 'dark';
+    setSettings(previous => {
+      const updated = {...previous, mode: next};
+      saveSettings(updated);
+      return updated;
+    });
+    onModeChange(next);
+  }
+
+  function handleSaveSettings(next: Settings) {
+    setSettings(next);
+    saveSettings(next);
+    onModeChange(next.mode);
+  }
+
+  // Keep shortcut handlers fresh without rebinding on every streamed token.
+  const shortcutsRef = useRef({handleNewChat, handleToggleTheme});
+  shortcutsRef.current = {handleNewChat, handleToggleTheme};
+
+  useEffect(() => {
+    function onKeyDown(event: KeyboardEvent) {
+      if (!(event.metaKey || event.ctrlKey)) return;
+      const key = event.key.toLowerCase();
+      if (key === 'k') {
+        event.preventDefault();
+        shortcutsRef.current.handleNewChat();
+      } else if (key === ',') {
+        event.preventDefault();
+        setIsSettingsOpen(true);
+      } else if (key === 'l' && event.shiftKey) {
+        event.preventDefault();
+        shortcutsRef.current.handleToggleTheme();
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
+
+  // --- layout --------------------------------------------------------------
 
   const sidebar = (
     <Stack direction="vertical" style={styles.sidebar}>
       <HStack gap={2} style={styles.sidebarHeader}>
         <StackItem size="fill">
           <HStack gap={2} vAlign="center">
-            <Icon
-              icon={ChatBubbleLeftRightIcon}
-              size="sm"
-              color="secondary"
-            />
-            <Heading level={6}>Conversations</Heading>
+            <Icon icon={ChatBubbleLeftRightIcon} size="sm" color="secondary" />
+            <Heading level={5}>Open Sandbox</Heading>
           </HStack>
         </StackItem>
         <IconButton
           label="New conversation"
-          tooltip="New conversation"
+          tooltip="New conversation (⌘/Ctrl+K)"
           icon={<Icon icon={PlusIcon} size="sm" color="inherit" />}
           variant="ghost"
           size="sm"
@@ -538,14 +591,14 @@ export default function AIChatPage() {
             icon={<Icon icon={XMarkIcon} size="sm" color="inherit" />}
             variant="ghost"
             size="sm"
-            onClick={() => setIsSidebarOpen(false)}
+            onClick={() => setIsMobileSidebarOpen(false)}
           />
         )}
       </HStack>
 
       <VStack style={styles.sidebarSearch}>
         <TextInput
-          label="Search conversations"
+          label="Search conversations and messages"
           isLabelHidden
           size="sm"
           type="search"
@@ -559,7 +612,15 @@ export default function AIChatPage() {
 
       <StackItem size="fill" style={styles.sidebarScroll}>
         {visibleConversations.length > 0 ? (
-          <List density="compact" hasDividers={false} edge="outset">
+          <List
+            density="compact"
+            hasDividers={false}
+            edge="outset"
+            header={
+              <Text type="label" size="sm" color="secondary">
+                Conversations
+              </Text>
+            }>
             {visibleConversations.map(conversation => (
               <ListItem
                 key={conversation.id}
@@ -569,7 +630,7 @@ export default function AIChatPage() {
                 isSelected={conversation.id === selectedId}
                 onClick={() => {
                   setSelectedId(conversation.id);
-                  setIsSidebarOpen(false);
+                  setIsMobileSidebarOpen(false);
                 }}
                 startContent={
                   <Icon
@@ -582,21 +643,129 @@ export default function AIChatPage() {
             ))}
           </List>
         ) : (
-          <VStack style={{padding: 'var(--spacing-3)'}}>
+          <VStack style={styles.pad}>
             <Text type="supporting" color="secondary">
-              No conversations match “{search}”.
+              No conversations or messages match “{search}”.
             </Text>
           </VStack>
         )}
       </StackItem>
 
       <Divider />
-      <VStack style={styles.sidebarFooter}>
+      <VStack gap={1} style={styles.sidebarFooter}>
+        <HStack gap={1}>
+          <Button
+            label="Export all"
+            variant="ghost"
+            size="sm"
+            icon={<Icon icon={ArrowDownTrayIcon} size="sm" />}
+            onClick={handleExportAll}
+          />
+          <Button
+            label="Clear all"
+            variant="ghost"
+            size="sm"
+            icon={<Icon icon={TrashIcon} size="sm" />}
+            onClick={() => setIsClearOpen(true)}
+          />
+        </HStack>
         <Text type="supporting" color="secondary">
           Free &amp; open source · MIT licensed
         </Text>
       </VStack>
     </Stack>
+  );
+
+  const headerActions = isCompact ? (
+    <MoreMenu
+      label="Conversation actions"
+      size="sm"
+      items={[
+        {
+          label: mode === 'dark' ? 'Light mode' : 'Dark mode',
+          icon: mode === 'dark' ? SunIcon : MoonIcon,
+          onClick: handleToggleTheme,
+        },
+        {
+          label: 'Settings',
+          icon: Cog6ToothIcon,
+          onClick: () => setIsSettingsOpen(true),
+        },
+        {
+          label: 'Rename conversation',
+          icon: PencilIcon,
+          onClick: () => {
+            setRenameValue(selected?.title ?? '');
+            setIsRenameOpen(true);
+          },
+        },
+        {
+          label: 'Export as Markdown',
+          icon: ArrowDownTrayIcon,
+          onClick: handleExport,
+        },
+        {type: 'divider'},
+        {
+          label: 'Delete conversation',
+          icon: TrashIcon,
+          onClick: handleDeleteChat,
+        },
+      ]}
+    />
+  ) : (
+    <>
+      <IconButton
+        label={mode === 'dark' ? 'Switch to light' : 'Switch to dark'}
+        tooltip={
+          mode === 'dark' ? 'Switch to light (⌘/Ctrl+⇧+L)' : 'Switch to dark (⌘/Ctrl+⇧+L)'
+        }
+        icon={
+          <Icon
+            icon={mode === 'dark' ? SunIcon : MoonIcon}
+            size="sm"
+            color="inherit"
+          />
+        }
+        variant="ghost"
+        size="sm"
+        onClick={handleToggleTheme}
+      />
+      <IconButton
+        label="Settings"
+        tooltip="Settings (⌘/Ctrl+,)"
+        icon={<Icon icon={Cog6ToothIcon} size="sm" color="inherit" />}
+        variant="ghost"
+        size="sm"
+        onClick={() => setIsSettingsOpen(true)}
+      />
+      <IconButton
+        label="Rename conversation"
+        tooltip="Rename conversation"
+        icon={<Icon icon={PencilIcon} size="sm" color="inherit" />}
+        variant="ghost"
+        size="sm"
+        onClick={() => {
+          setRenameValue(selected?.title ?? '');
+          setIsRenameOpen(true);
+        }}
+      />
+      <IconButton
+        label="Export conversation"
+        tooltip="Export as Markdown"
+        icon={<Icon icon={ArrowDownTrayIcon} size="sm" color="inherit" />}
+        variant="ghost"
+        size="sm"
+        onClick={handleExport}
+      />
+      <IconButton
+        label="Delete conversation"
+        tooltip="Delete conversation"
+        icon={<Icon icon={TrashIcon} size="sm" color="inherit" />}
+        variant="ghost"
+        size="sm"
+        onClick={handleDeleteChat}
+      />
+    </>
   );
 
   return (
@@ -613,26 +782,40 @@ export default function AIChatPage() {
         content={
           <LayoutContent padding={0}>
             <Stack direction="vertical" style={{height: '100%', minHeight: 0}}>
-              <HStack gap={3} style={styles.streamHeader}>
-                {isCompact && (
-                  <IconButton
-                    label="Open conversations"
-                    tooltip="Open conversations"
-                    icon={<Icon icon={Bars3Icon} size="sm" color="inherit" />}
-                    variant="ghost"
-                    size="sm"
-                    onClick={() => setIsSidebarOpen(true)}
-                  />
-                )}
+              <HStack gap={2} style={styles.streamHeader}>
+                <IconButton
+                  label={showSidebar ? 'Hide conversations' : 'Show conversations'}
+                  tooltip={
+                    showSidebar
+                      ? 'Hide conversations'
+                      : 'Show conversations'
+                  }
+                  icon={
+                    <Icon
+                      icon={
+                        showSidebar
+                          ? ChevronDoubleLeftIcon
+                          : ChevronDoubleRightIcon
+                      }
+                      size="sm"
+                      color="inherit"
+                    />
+                  }
+                  variant="ghost"
+                  size="sm"
+                  onClick={toggleSidebar}
+                />
                 <StackItem size="fill" style={styles.title}>
                   <VStack gap={0}>
                     <Heading level={5}>
                       {selected?.title ?? 'New conversation'}
                     </Heading>
-                    <Text type="supporting" color="secondary">
+                    <Text type="supporting" color="secondary" maxLines={1}>
+                      {selected?.messages.length ?? 0} messages ·{' '}
+                      {wordCount(selected ? [selected] : [])} words ·{' '}
                       {apiStatus.configured
-                        ? `${apiStatus.model} · streamed via ${apiStatus.provider}`
-                        : 'Local demo · saved in this browser'}
+                        ? `${apiStatus.model} via ${apiStatus.provider}`
+                        : 'local demo'}
                     </Text>
                   </VStack>
                 </StackItem>
@@ -640,14 +823,7 @@ export default function AIChatPage() {
                   label={apiStatus.configured ? 'Live' : 'Local demo'}
                   variant="neutral"
                 />
-                <IconButton
-                  label="Delete conversation"
-                  tooltip="Delete conversation"
-                  icon={<Icon icon={TrashIcon} size="sm" color="inherit" />}
-                  variant="ghost"
-                  size="sm"
-                  onClick={handleDeleteChat}
-                />
+                {headerActions}
               </HStack>
 
               <Divider />
@@ -663,13 +839,13 @@ export default function AIChatPage() {
                       onSubmit={handleSubmit}
                       isStopShown={isResponding}
                       onStop={handleStop}
-                      placeholder="Ask anything about open-source AI..."
+                      placeholder="Ask anything — Markdown is supported..."
                       input={<ChatComposerInput />}
                       footerActions={
                         <Text type="supporting" color="secondary">
                           {apiStatus.configured
-                            ? 'Server-side key · streamed reply'
-                            : 'No API key · offline demo replies'}
+                            ? 'Streaming · reasoning preserved'
+                            : 'Offline demo · replies use Markdown'}
                         </Text>
                       }
                     />
@@ -680,8 +856,8 @@ export default function AIChatPage() {
                       title="Start an open conversation"
                       description={
                         apiStatus.configured
-                          ? 'Connected to Reflection AI. Ask a question or try one of these:'
-                          : 'Everything runs in your browser. Add REFLECTION_API_KEY to .env for live answers, or try one of these:'
+                          ? 'Replies support Markdown, code blocks and tables. Try one of these:'
+                          : 'Runs entirely in your browser with Markdown replies. Add REFLECTION_API_KEY to .env for live answers, or try one of these:'
                       }
                       actions={
                         <HStack gap={2} wrap="wrap">
@@ -700,17 +876,21 @@ export default function AIChatPage() {
                   }>
                   {selected && selected.messages.length > 0 ? (
                     <ChatMessageList density="balanced">
-                      <ChatSystemMessage variant="divider">
-                        Today
-                      </ChatSystemMessage>
+                      <ChatSystemMessage variant="divider">Today</ChatSystemMessage>
                       {selected.messages.map(message => (
-                        <MessageRow key={message.id} message={message} />
+                        <MessageRow
+                          key={message.id}
+                          message={message}
+                          isStreaming={
+                            isResponding &&
+                            message.role === 'assistant' &&
+                            message === selected.messages[selected.messages.length - 1]
+                          }
+                          onRegenerate={() => handleRegenerate(message.id)}
+                          onEdit={text => handleEditMessage(message.id, text)}
+                          onDelete={() => handleDeleteMessage(message.id)}
+                        />
                       ))}
-                      {isResponding && (
-                        <ChatSystemMessage>
-                          Generating a reply…
-                        </ChatSystemMessage>
-                      )}
                     </ChatMessageList>
                   ) : null}
                 </ChatLayout>
@@ -719,6 +899,56 @@ export default function AIChatPage() {
           </LayoutContent>
         }
       />
+
+      <SettingsDialog
+        isOpen={isSettingsOpen}
+        onOpenChange={setIsSettingsOpen}
+        settings={settings}
+        onSave={handleSaveSettings}
+      />
+
+      <Dialog
+        isOpen={isRenameOpen}
+        onOpenChange={setIsRenameOpen}
+        purpose="form"
+        width={420}>
+        <VStack gap={3}>
+          <DialogHeader title="Rename conversation" onOpenChange={setIsRenameOpen} />
+          <TextInput
+            label="Title"
+            value={renameValue}
+            onChange={setRenameValue}
+            onEnter={handleRenameSave}
+            hasAutoFocus
+          />
+          <HStack gap={2} justify="end">
+            <Button label="Cancel" variant="ghost" onClick={() => setIsRenameOpen(false)} />
+            <Button label="Save" variant="primary" onClick={handleRenameSave} />
+          </HStack>
+        </VStack>
+      </Dialog>
+
+      <Dialog
+        isOpen={isClearOpen}
+        onOpenChange={setIsClearOpen}
+        purpose="required"
+        width={420}>
+        <VStack gap={3}>
+          <DialogHeader
+            title="Clear all conversations?"
+            subtitle="This removes every saved conversation and cannot be undone."
+            onOpenChange={setIsClearOpen}
+          />
+          <HStack gap={2} justify="end">
+            <Button label="Cancel" variant="ghost" onClick={() => setIsClearOpen(false)} />
+            <Button
+              label="Clear everything"
+              variant="destructive"
+              onClick={handleClearAll}
+            />
+          </HStack>
+        </VStack>
+      </Dialog>
     </VStack>
   );
 }

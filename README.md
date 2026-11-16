@@ -1,9 +1,9 @@
-# Astryx Chat
+# Open Sandbox
 
 [![CI](https://github.com/sheikhminds/open-sandbox/actions/workflows/ci.yml/badge.svg)](https://github.com/sheikhminds/open-sandbox/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](./LICENSE)
 
-A free and open-source, local-first chat interface built with
+Open Sandbox is a free and open-source, local-first chat interface built with
 [Astryx](https://github.com/meta/astryx), React and StyleX (all MIT licensed).
 Conversations are saved in the browser, and replies can come from the
 [Reflection AI](https://www.reflection.ai/) OpenAI-compatible API.
@@ -27,6 +27,25 @@ The key is read **only by the server** (`server/chatApi.ts`). Vite loads it from
 `export REFLECTION_API_KEY=...` in your shell instead of using `.env`.
 
 Optional: `REFLECTION_MODEL` overrides the default `Beam-1.0-501B-A23B`.
+
+## Features
+
+- **Markdown replies** — headings, lists, tables, fenced code blocks with copy,
+  inline code, links and emphasis, rendered by Astryx's `Markdown` component.
+  Streaming replies parse incrementally and fade in chunk by chunk.
+- **Conversation management** — new, rename, delete, search across titles *and*
+  message bodies, export one or all conversations as `.md`, and clear everything.
+- **Message tools** — copy, regenerate an assistant reply, edit and resend a user
+  message, delete a single message, and inspect the model's reasoning in a
+  collapsible panel.
+- **Settings** — system prompt, temperature and max tokens, plus light/dark/
+  system appearance. Saved locally with the conversations.
+- **Keyboard shortcuts** — `⌘/Ctrl+K` new chat, `⌘/Ctrl+,` settings,
+  `⌘/Ctrl+Shift+L` toggle theme.
+- **Local-first** — conversations and preferences live in `localStorage`; no
+  analytics, and the API token stays on the server.
+- **Responsive** — conversation drawer collapses on narrow screens; resizable
+  layout and scroll-to-bottom come from Astryx's `ChatLayout`.
 
 ## Run
 
