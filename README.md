@@ -44,8 +44,12 @@ Optional: `REFLECTION_MODEL` overrides the default `Beam-1.0-501B-A23B`.
   `⌘/Ctrl+Shift+L` toggle theme.
 - **Local-first** — conversations and preferences live in `localStorage`; no
   analytics, and the API token stays on the server.
-- **Responsive** — conversation drawer collapses on narrow screens; resizable
-  layout and scroll-to-bottom come from Astryx's `ChatLayout`.
+- **Responsive on every device** — phones (≤768px) get a full-height `Drawer`
+  with scrim, a compact chat density, a single overflow menu, short metadata and
+  safe-area insets for notched screens; tablets (769–1024px) get a narrower
+  docked panel; desktops get the full panel and all header actions. Short
+  landscape viewports also switch to compact spacing. Astryx's `ChatLayout`
+  supplies scroll-to-bottom and a keyboard-aware composer dock.
 
 ## Run
 
